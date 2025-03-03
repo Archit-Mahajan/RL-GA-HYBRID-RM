@@ -6,6 +6,10 @@ import random
 from tqdm import tqdm
 from math import radians, sin, cos, sqrt, asin
 import time
+import os
+
+# Create output directory for saving visualizations
+os.makedirs('tsp_visualizations', exist_ok=True)
 
 # Function to calculate Haversine distance (in km) between two points given by latitude/longitude
 def haversine_distance(lat1, lon1, lat2, lon2):
@@ -121,114 +125,117 @@ ALPHA = 0.1  # Learning rate
 GAMMA = 0.9  # Discount factor
 NUM_EPISODES = 50000
 
-# Initialize Q-table
-Q_table = np.zeros((n_cities, n_cities))
-
-# Training with epsilon decay and progress bar
-epsilon_decay = (EPSILON_START - EPSILON_END) / NUM_EPISODES
-epsilon = EPSILON_START
-
-# Track best path and its distance for convergence monitoring
-best_distance = float('inf')
-best_path = []
-convergence_data = []
-traffic_history = []  # Track traffic patterns over time
-
-# Initialize distance matrix with traffic
-distance_matrix, traffic_heatmap, current_pattern = update_distance_matrix(base_distance_matrix)
-
-# Start timing the training process
-training_start_time = time.time()
-
-# Training loop
-for episode in tqdm(range(NUM_EPISODES), desc="Training Q-Learning with Traffic"):
-    # Update traffic conditions periodically
-    if episode % TRAFFIC_UPDATE_FREQUENCY == 0:
-        distance_matrix, traffic_heatmap, current_pattern = update_distance_matrix(base_distance_matrix)
-        traffic_history.append((episode, current_pattern))
-    
-    current_city = START_CITY
-    visited = set([current_city])
-    path = [current_city]
+# Function to calculate distances for a given path
+def calculate_path_distances(path, distance_matrix):
     total_distance = 0
-    
-    # Build route until all cities are visited
-    while len(visited) < n_cities:
-        # Available cities (not yet visited)
-        available_cities = [c for c in range(n_cities) if c not in visited]
-        
-        # Exploration vs exploitation
-        if random.uniform(0, 1) < epsilon:
-            next_city = random.choice(available_cities)  # Explore
-        else:
-            # Get Q-values for available cities only
-            available_q_values = [Q_table[current_city, c] if c not in visited else -np.inf 
-                                for c in range(n_cities)]
-            next_city = np.argmax(available_q_values)  # Exploit
-            
-            # Fallback if next_city is already visited
-            if next_city in visited:
-                next_city = random.choice(available_cities)
-        
-        # Calculate reward (negative distance with traffic consideration)
-        reward = -distance_matrix[current_city, next_city]
-        total_distance -= reward  # Track actual distance
-        
-        # Update Q-table with traffic-aware values
-        future_value = max([Q_table[next_city, c] for c in range(n_cities) if c not in visited and c != next_city], default=0)
-        Q_table[current_city, next_city] += ALPHA * (reward + GAMMA * future_value - Q_table[current_city, next_city])
-        
-        # Move to next city
-        current_city = next_city
-        visited.add(current_city)
-        path.append(current_city)
-    
-    # Return to start city to complete the tour
-    reward = -distance_matrix[current_city, START_CITY]
-    total_distance -= reward
-    
-    # Update Q-value for return to start
-    Q_table[current_city, START_CITY] += ALPHA * (reward - Q_table[current_city, START_CITY])
-    
-    # Check if this is the best path so far
-    if total_distance < best_distance:
-        best_distance = total_distance
-        best_path = path + [START_CITY]  # Add return to start
-        
-    # Record progress for analysis
-    if episode % 100 == 0:
-        convergence_data.append((episode, best_distance))
-    
-    # Decay epsilon
-    epsilon = max(EPSILON_END, epsilon - epsilon_decay)
-
-# End timing the training process
-training_end_time = time.time()
-training_time = training_end_time - training_start_time
-print(f"\nTraining completed in {training_time:.2f} seconds")
-
-# Function to calculate both traffic and non-traffic distances for a given path
-def calculate_path_distances(path, base_matrix, traffic_matrix):
-    non_traffic_distance = 0
-    traffic_distance = 0
-    
     for i in range(len(path) - 1):
         city1, city2 = path[i], path[i+1]
-        non_traffic_distance += base_matrix[city1, city2]
-        traffic_distance += traffic_matrix[city1, city2]
-    
-    # Estimate travel time (assuming average speed of 60 km/h)
-    travel_time = traffic_distance / 60
-    
-    return non_traffic_distance, traffic_distance, travel_time
+        total_distance += distance_matrix[city1, city2]
+    return total_distance
 
-# Generate an optimal path considering the current traffic
-def get_optimal_path_with_traffic():
-    # Start timing the optimal path calculation
+# Function to train the Q-Learning model
+def train_q_learning(distance_matrix, use_traffic=True, description="Q-Learning"):
+    # Initialize Q-table
+    Q_table = np.zeros((n_cities, n_cities))
+    
+    # Training with epsilon decay and progress bar
+    epsilon_decay = (EPSILON_START - EPSILON_END) / NUM_EPISODES
+    epsilon = EPSILON_START
+    
+    # Track best path and its distance for convergence monitoring
+    best_distance = float('inf')
+    best_path = []
+    convergence_data = []
+    traffic_history = []  # Track traffic patterns over time
+    
+    # Current distance matrix (may be updated with traffic)
+    current_distance_matrix = distance_matrix.copy()
+    traffic_heatmap = np.ones((n_cities, n_cities))  # Default no traffic
+    current_pattern = "none" if not use_traffic else "normal"
+    
+    # Start timing the training process
+    training_start_time = time.time()
+    
+    # Training loop
+    for episode in tqdm(range(NUM_EPISODES), desc=f"Training {description}"):
+        # Update traffic conditions periodically if we're using traffic
+        if use_traffic and episode % TRAFFIC_UPDATE_FREQUENCY == 0:
+            current_distance_matrix, traffic_heatmap, current_pattern = update_distance_matrix(distance_matrix)
+            traffic_history.append((episode, current_pattern))
+        
+        current_city = START_CITY
+        visited = set([current_city])
+        path = [current_city]
+        total_distance = 0
+        
+        # Build route until all cities are visited
+        while len(visited) < n_cities:
+            # Available cities (not yet visited)
+            available_cities = [c for c in range(n_cities) if c not in visited]
+            
+            # Exploration vs exploitation
+            if random.uniform(0, 1) < epsilon:
+                next_city = random.choice(available_cities)  # Explore
+            else:
+                # Get Q-values for available cities only
+                available_q_values = [Q_table[current_city, c] if c not in visited else -np.inf 
+                                    for c in range(n_cities)]
+                next_city = np.argmax(available_q_values)  # Exploit
+                
+                # Fallback if next_city is already visited
+                if next_city in visited:
+                    next_city = random.choice(available_cities)
+            
+            # Calculate reward (negative distance with traffic consideration)
+            reward = -current_distance_matrix[current_city, next_city]
+            total_distance -= reward  # Track actual distance
+            
+            # Update Q-table with traffic-aware values
+            future_value = max([Q_table[next_city, c] for c in range(n_cities) if c not in visited and c != next_city], default=0)
+            Q_table[current_city, next_city] += ALPHA * (reward + GAMMA * future_value - Q_table[current_city, next_city])
+            
+            # Move to next city
+            current_city = next_city
+            visited.add(current_city)
+            path.append(current_city)
+        
+        # Return to start city to complete the tour
+        reward = -current_distance_matrix[current_city, START_CITY]
+        total_distance -= reward
+        
+        # Update Q-value for return to start
+        Q_table[current_city, START_CITY] += ALPHA * (reward - Q_table[current_city, START_CITY])
+        
+        # Check if this is the best path so far
+        if total_distance < best_distance:
+            best_distance = total_distance
+            best_path = path + [START_CITY]  # Add return to start
+            
+        # Record progress for analysis
+        if episode % 100 == 0:
+            convergence_data.append((episode, best_distance))
+        
+        # Decay epsilon
+        epsilon = max(EPSILON_END, epsilon - epsilon_decay)
+    
+    # End timing the training process
+    training_end_time = time.time()
+    training_time = training_end_time - training_start_time
+    print(f"\n{description} training completed in {training_time:.2f} seconds")
+    
+    return Q_table, best_path, best_distance, convergence_data, traffic_history, training_time
+
+# Generate an optimal path using Q-values
+def get_optimal_path(Q_table, distance_matrix, use_traffic=True):
     path_calc_start_time = time.time()
     
-    # Update traffic one final time for the optimal route
-    current_distance_matrix, current_traffic, pattern = update_distance_matrix(base_distance_matrix)
+    # Update traffic one final time for the optimal route if using traffic
+    if use_traffic:
+        current_distance_matrix, current_traffic, pattern = update_distance_matrix(distance_matrix)
+    else:
+        current_distance_matrix = distance_matrix.copy()
+        current_traffic = np.ones((n_cities, n_cities))  # No traffic multiplier
+        pattern = "none"
     
     path = [START_CITY]
     current_city = START_CITY
@@ -263,128 +270,229 @@ def get_optimal_path_with_traffic():
     # Return to starting city to complete the tour
     path.append(START_CITY)
     
-    # Calculate distances (with and without traffic)
-    non_traffic_distance, traffic_distance, travel_time = calculate_path_distances(path, base_distance_matrix, current_distance_matrix)
+    # Calculate distances
+    path_distance = calculate_path_distances(path, current_distance_matrix)
     
     # End timing the optimal path calculation
     path_calc_end_time = time.time()
     path_calc_time = path_calc_end_time - path_calc_start_time
     
-    return path, non_traffic_distance, traffic_distance, travel_time, current_traffic, pattern, path_calc_time
+    return path, path_distance, current_traffic, pattern, path_calc_time
 
-optimal_path, optimal_distance_no_traffic, optimal_distance_with_traffic, travel_time, traffic_matrix, traffic_pattern, path_calculation_time = get_optimal_path_with_traffic()
-optimal_cities = [city_names[i] for i in optimal_path]
-
-print(f"Current traffic pattern: {traffic_pattern}")
-print(f"Optimal path distance WITHOUT traffic: {optimal_distance_no_traffic:.2f} km")
-print(f"Optimal path distance WITH traffic: {optimal_distance_with_traffic:.2f} km")
-print(f"Traffic impact: {(optimal_distance_with_traffic - optimal_distance_no_traffic):.2f} km ({(optimal_distance_with_traffic/optimal_distance_no_traffic*100-100):.2f}% increase)")
-print(f"Estimated travel time: {travel_time:.2f} hours")
-print(f"Time to calculate optimal path: {path_calculation_time:.4f} seconds")
-print("Optimal path:", " -> ".join(optimal_cities))
-
-# Plot results with improved visualization
-fig = plt.figure(figsize=(15, 15))
-
-# Plot 1: Convergence
-ax1 = fig.add_subplot(3, 1, 1)
-episodes, distances = zip(*convergence_data)
-ax1.plot(episodes, distances)
-ax1.set_xlabel("Episode")
-ax1.set_ylabel("Best Tour Distance (km)")
-ax1.set_title("Convergence of Traffic-Aware Q-Learning")
-ax1.grid(True)
-
-# Plot 2: Traffic patterns over time
-ax2 = fig.add_subplot(3, 1, 2)
-pattern_colors = {'peak_hours': 'red', 'normal': 'orange', 'low': 'green'}
-for episode, pattern in traffic_history:
-    ax2.axvline(x=episode, color=pattern_colors[pattern], alpha=0.5, linewidth=1)
-
-ax2.set_xlabel("Episode")
-ax2.set_title("Traffic Pattern Changes During Training")
-ax2.set_yticks([])
-# Add a legend for traffic patterns
-from matplotlib.lines import Line2D
-pattern_legend_elements = [Line2D([0], [0], color=color, lw=2, label=pattern) 
-                        for pattern, color in pattern_colors.items()]
-ax2.legend(handles=pattern_legend_elements)
-ax2.grid(True)
-
-# Plot 3: Map with route (using GA example as reference)
-ax3 = fig.add_subplot(3, 1, 3)
-
-# Plot all cities
-ax3.scatter(df['Long'], df['Lat'], c='blue', s=50, label='Cities')
-
-# Extract coordinates for the optimal route
-route_lats = [df.iloc[city_idx]['Lat'] for city_idx in optimal_path]
-route_longs = [df.iloc[city_idx]['Long'] for city_idx in optimal_path]
-
-# Plot the basic route line (for reference)
-ax3.plot(route_longs, route_lats, 'r-', linewidth=1.5, alpha=0.3, 
-         label=f'Route: {optimal_distance_no_traffic:.2f} km (no traffic) | {optimal_distance_with_traffic:.2f} km (with traffic)')
-
-# Color-code route segments based on traffic
-for i in range(len(optimal_path) - 1):
-    city1, city2 = optimal_path[i], optimal_path[i+1]
+# Function to plot convergence
+def plot_convergence(convergence_data, traffic_history=None, title="Convergence", filename="convergence.png"):
+    plt.figure(figsize=(12, 8))
     
-    traffic_factor = traffic_matrix[city1, city2]
+    # Plot convergence
+    episodes, distances = zip(*convergence_data)
+    plt.plot(episodes, distances, 'b-', linewidth=2)
+    plt.xlabel("Episode", fontsize=14)
+    plt.ylabel("Best Tour Distance (km)", fontsize=14)
+    plt.title(title, fontsize=16)
+    plt.grid(True)
     
-    # Determine color and width based on traffic level (based on the GA example)
-    if traffic_factor < 1.2:
-        color = 'green'
-        width = 2.0
-    elif traffic_factor < 1.8:
-        color = 'orange'
-        width = 3.0
+    # If we have traffic history, overlay traffic pattern changes
+    if traffic_history:
+        ax2 = plt.gca().twinx()
+        pattern_colors = {'peak_hours': 'red', 'normal': 'orange', 'low': 'green'}
+        
+        for i, (episode, pattern) in enumerate(traffic_history):
+            ax2.axvline(x=episode, color=pattern_colors[pattern], alpha=0.2, linewidth=1)
+        
+        ax2.set_yticks([])
+        ax2.set_ylabel("Traffic Patterns", fontsize=14)
+        
+        # Add a legend for traffic patterns
+        from matplotlib.lines import Line2D
+        pattern_legend_elements = [Line2D([0], [0], color=color, lw=2, label=pattern) 
+                                  for pattern, color in pattern_colors.items()]
+        ax2.legend(handles=pattern_legend_elements, loc='upper right')
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join('tsp_visualizations', filename), dpi=300)
+    plt.close()
+
+# Function to plot route on map
+def plot_route_map(path, traffic_matrix=None, title="TSP Route", filename="route_map.png", distance=None, travel_time=None):
+    plt.figure(figsize=(14, 10))
+    
+    # Plot all cities
+    plt.scatter(df['Long'], df['Lat'], c='blue', s=50, label='Cities')
+    
+    # Extract coordinates for the route
+    route_lats = [df.iloc[city_idx]['Lat'] for city_idx in path]
+    route_longs = [df.iloc[city_idx]['Long'] for city_idx in path]
+    
+    # If no traffic data, just plot the basic route
+    if traffic_matrix is None or np.all(traffic_matrix == 1):
+        plt.plot(route_longs, route_lats, 'r-', linewidth=2.5, 
+                 label=f'Route: {distance:.2f} km')
     else:
-        color = 'red'
-        width = 4.0
+        # Plot the basic route line (for reference, with low opacity)
+        plt.plot(route_longs, route_lats, 'r-', linewidth=1.5, alpha=0.2)
+        
+        # Color-code route segments based on traffic
+        for i in range(len(path) - 1):
+            city1, city2 = path[i], path[i+1]
+            
+            traffic_factor = traffic_matrix[city1, city2]
+            
+            # Determine color and width based on traffic level
+            if traffic_factor < 1.2:
+                color = 'green'
+                width = 2.0
+            elif traffic_factor < 1.8:
+                color = 'orange'
+                width = 3.0
+            else:
+                color = 'red'
+                width = 4.0
+            
+            # Draw this segment with traffic-based color and width
+            plt.plot([df.iloc[city1]['Long'], df.iloc[city2]['Long']],
+                     [df.iloc[city1]['Lat'], df.iloc[city2]['Lat']],
+                     color=color, linewidth=width, alpha=0.8)
+        
+        # Add a legend for traffic levels
+        from matplotlib.lines import Line2D
+        traffic_legend_elements = [
+            Line2D([0], [0], color='green', lw=2, label='Light Traffic (<1.2x)'),
+            Line2D([0], [0], color='orange', lw=3, label='Medium Traffic (1.2-1.8x)'),
+            Line2D([0], [0], color='red', lw=4, label='Heavy Traffic (>1.8x)')
+        ]
+        plt.legend(handles=traffic_legend_elements, loc='lower right')
     
-    # Draw this segment with traffic-based color and width
-    ax3.plot([df.iloc[city1]['Long'], df.iloc[city2]['Long']],
-             [df.iloc[city1]['Lat'], df.iloc[city2]['Lat']],
-             color=color, linewidth=width, alpha=0.7)
-
-# Annotate cities
-for i, city_idx in enumerate(optimal_path):
-    city_name = df.iloc[city_idx]['City']
-    ax3.annotate(
-        city_name,
-        (df.iloc[city_idx]['Long'], df.iloc[city_idx]['Lat']),
-        xytext=(5, 5),
-        textcoords='offset points',
-        fontsize=8
+    # Annotate cities with names
+    for i, city_idx in enumerate(path):
+        city_name = df.iloc[city_idx]['City']
+        plt.annotate(
+            city_name,
+            (df.iloc[city_idx]['Long'], df.iloc[city_idx]['Lat']),
+            xytext=(5, 5),
+            textcoords='offset points',
+            fontsize=8
+        )
+    
+    # Highlight start/end city
+    plt.scatter(
+        df.iloc[START_CITY]['Long'],
+        df.iloc[START_CITY]['Lat'],
+        c='green',
+        s=100,
+        label='Start/End City'
     )
+    
+    # Add subtitle with distance information
+    subtitle = f"Distance: {distance:.2f} km"
+    if travel_time:
+        subtitle += f" | Travel Time: {travel_time:.2f} hours"
+    
+    plt.title(f"{title}\nStarting from {city_names[START_CITY]}\n{subtitle}", fontsize=14)
+    plt.xlabel('Longitude', fontsize=12)
+    plt.ylabel('Latitude', fontsize=12)
+    plt.grid(True)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join('tsp_visualizations', filename), dpi=300)
+    plt.close()
 
-# Highlight start/end city
-ax3.scatter(
-    df.iloc[START_CITY]['Long'],
-    df.iloc[START_CITY]['Lat'],
-    c='green',
-    s=100,
-    label='Start/End City'
+# PART 1: Train without traffic
+print("\n--- Training Q-Learning WITHOUT Traffic ---")
+Q_table_no_traffic, best_path_no_traffic, best_distance_no_traffic, convergence_data_no_traffic, _, training_time_no_traffic = train_q_learning(
+    base_distance_matrix, 
+    use_traffic=False, 
+    description="Q-Learning WITHOUT Traffic"
 )
 
-# Add a legend for traffic levels
-traffic_legend_elements = [
-    Line2D([0], [0], color='green', lw=2, label='Light Traffic (<1.2x)'),
-    Line2D([0], [0], color='orange', lw=3, label='Medium Traffic (1.2-1.8x)'),
-    Line2D([0], [0], color='red', lw=4, label='Heavy Traffic (>1.8x)')
-]
-ax3.legend(handles=traffic_legend_elements, loc='lower right')
+# Get optimal route without traffic
+print("\n--- Calculating Optimal Route WITHOUT Traffic ---")
+optimal_path_no_traffic, optimal_distance_no_traffic, _, _, path_calc_time_no_traffic = get_optimal_path(
+    Q_table_no_traffic, 
+    base_distance_matrix, 
+    use_traffic=False
+)
 
-ax3.set_title(f'Traffic-Aware TSP Route\nStarting from {city_names[START_CITY]}\nTravel Time: {travel_time:.2f} hours')
-ax3.set_xlabel('Longitude')
-ax3.set_ylabel('Latitude')
-ax3.grid(True)
+# PART 2: Train with traffic
+print("\n--- Training Q-Learning WITH Traffic ---")
+Q_table_with_traffic, best_path_with_traffic, best_distance_with_traffic, convergence_data_with_traffic, traffic_history, training_time_with_traffic = train_q_learning(
+    base_distance_matrix, 
+    use_traffic=True, 
+    description="Q-Learning WITH Traffic"
+)
 
-# Add timing information to the plot
-plt.figtext(0.5, 0.01, 
-           f"Training time: {training_time:.2f} sec | Optimal path calculation: {path_calculation_time:.4f} sec | Traffic impact: {(optimal_distance_with_traffic/optimal_distance_no_traffic*100-100):.2f}% increase", 
-           ha="center", fontsize=12, bbox={"facecolor":"white", "alpha":0.5, "pad":5})
+# Get optimal route with traffic
+print("\n--- Calculating Optimal Route WITH Traffic ---")
+optimal_path_with_traffic, optimal_distance_with_traffic, traffic_matrix, traffic_pattern, path_calc_time_with_traffic = get_optimal_path(
+    Q_table_with_traffic, 
+    base_distance_matrix, 
+    use_traffic=True
+)
 
-plt.tight_layout()
-plt.savefig('tsp_solution_with_traffic_comparison.png', dpi=300)
-plt.show()
+# Calculate additional metrics
+estimated_travel_time = optimal_distance_with_traffic / 60  # Assuming average speed of 60 km/h
+traffic_impact_km = optimal_distance_with_traffic - optimal_distance_no_traffic
+traffic_impact_percent = (optimal_distance_with_traffic / optimal_distance_no_traffic * 100 - 100)
+
+# Print results
+print("\n--- RESULTS COMPARISON ---")
+print(f"Current traffic pattern: {traffic_pattern}")
+print(f"DISTANCE WITHOUT traffic: {optimal_distance_no_traffic:.2f} km")
+print(f"DISTANCE WITH traffic: {optimal_distance_with_traffic:.2f} km")
+print(f"Traffic impact: {traffic_impact_km:.2f} km ({traffic_impact_percent:.2f}% increase)")
+print(f"Estimated travel time with traffic: {estimated_travel_time:.2f} hours")
+print("\nTraining performance:")
+print(f"Training time WITHOUT traffic: {training_time_no_traffic:.2f} seconds")
+print(f"Training time WITH traffic: {training_time_with_traffic:.2f} seconds")
+print(f"Path calculation time WITHOUT traffic: {path_calc_time_no_traffic:.4f} seconds")
+print(f"Path calculation time WITH traffic: {path_calc_time_with_traffic:.4f} seconds")
+
+# Convert paths to city names for display
+optimal_cities_no_traffic = [city_names[i] for i in optimal_path_no_traffic]
+optimal_cities_with_traffic = [city_names[i] for i in optimal_path_with_traffic]
+
+print("\nOptimal path WITHOUT traffic:")
+print(" -> ".join(optimal_cities_no_traffic))
+print("\nOptimal path WITH traffic:")
+print(" -> ".join(optimal_cities_with_traffic))
+
+# Generate the four plots
+print("\n--- Generating visualizations ---")
+
+# 1. Convergence plot WITHOUT traffic
+plot_convergence(
+    convergence_data_no_traffic,
+    title="Convergence of Q-Learning (WITHOUT Traffic)",
+    filename="convergence_no_traffic.png"
+)
+
+# 2. Convergence plot WITH traffic
+plot_convergence(
+    convergence_data_with_traffic,
+    traffic_history=traffic_history,
+    title="Convergence of Q-Learning (WITH Traffic)",
+    filename="convergence_with_traffic.png"
+)
+
+# 3. Route visualization WITHOUT traffic
+plot_route_map(
+    optimal_path_no_traffic,
+    title="TSP Route WITHOUT Traffic",
+    filename="route_map_no_traffic.png",
+    distance=optimal_distance_no_traffic
+)
+
+# 4. Route visualization WITH traffic
+plot_route_map(
+    optimal_path_with_traffic,
+    traffic_matrix=traffic_matrix,
+    title="TSP Route WITH Traffic",
+    filename="route_map_with_traffic.png",
+    distance=optimal_distance_with_traffic,
+    travel_time=estimated_travel_time
+)
+
+print(f"\nAll visualizations have been saved to the 'tsp_visualizations' directory.")
+print("1. convergence_no_traffic.png - Convergence plot for Q-Learning without traffic")
+print("2. convergence_with_traffic.png - Convergence plot for Q-Learning with traffic")
+print("3. route_map_no_traffic.png - Route visualization without traffic")
+print("4. route_map_with_traffic.png - Route visualization with traffic")

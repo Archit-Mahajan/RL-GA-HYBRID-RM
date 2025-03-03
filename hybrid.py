@@ -242,7 +242,7 @@ EPSILON_START = 0.9
 EPSILON_END = 0.01
 ALPHA = 0.1  # Learning rate
 GAMMA = 0.9  # Discount factor
-NUM_EPISODES = 20000
+NUM_EPISODES = 50000
 # START_CITY is now set by user input
 
 # Initialize Q-table
@@ -552,7 +552,7 @@ def q_learning_guided_improvement(route, q_table, current_distance_matrix, impro
     return new_route
 
 # Traffic-aware Hybrid Genetic Algorithm
-def traffic_aware_hybrid_ga(q_learning_path, q_table, traffic_manager, generations=500, pop_size=150, tournament_size=5, crossover_rate=0.95):
+def traffic_aware_hybrid_ga(q_learning_path, q_table, traffic_manager, generations=50000, pop_size=150, tournament_size=5, crossover_rate=0.95):
     """Enhanced genetic algorithm that adapts to traffic conditions."""
     # Create initial population with Q-learning influence
     population = create_hybrid_population(pop_size, n_cities, q_learning_path)
@@ -674,7 +674,7 @@ print("Starting traffic-aware hybrid optimization...")
     optimal_ql_path,
     Q_table,
     traffic_manager,
-    generations=10000,
+    generations=50000,
     pop_size=150
 )
 
@@ -709,31 +709,37 @@ print(f"- Improvement over Q-Learning travel time: {improvement_over_ql_time:.2f
 
 # ====================== DATA VISUALIZATION ======================
 
-# Plot convergence history and traffic information
-plt.figure(figsize=(15, 18))
+## ====================== DATA VISUALIZATION ======================
 
-# Plot 1: Convergence of Q-Learning
-plt.subplot(3, 1, 1)
+# Save directory
+output_dir = '/Users/architmahajan/Desktop/ResearchPapercode/hybrid_tsp_visualizatons'  # you can change this to your preferred directory
+
+# ---- 1. Q-Learning Convergence Plot ----
+plt.figure(figsize=(10, 6))
 ql_episodes, ql_distances = zip(*ql_convergence_data)
 plt.plot(ql_episodes, ql_distances, 'b-', linewidth=2)
-plt.title('Q-Learning Convergence')
+plt.title('Q-Learning Convergence (Base Distance Without Traffic)')
 plt.xlabel('Episodes')
 plt.ylabel('Best Tour Distance (km)')
 plt.grid(True)
+plt.tight_layout()
+plt.savefig(f'{output_dir}ql_convergence.png', dpi=300)
+plt.close()
 
-# Plot 2: Convergence of Hybrid GA and Traffic Conditions
-plt.subplot(3, 1, 2)
+# ---- 2. Hybrid GA Convergence with Traffic ----
+plt.figure(figsize=(10, 6))
+
 # Extract traffic data
 gen_points, hours, traffic_levels = zip(*traffic_history) if traffic_history else ([], [], [])
 
 # Plot best and average fitness
-plt.plot(range(len(hybrid_history)), hybrid_history, 'g-', linewidth=2, label='Best Distance')
-plt.plot(range(len(hybrid_avg_history)), hybrid_avg_history, 'b-', alpha=0.5, linewidth=1, label='Avg Distance')
+plt.plot(range(len(hybrid_history)), hybrid_history, 'g-', linewidth=2, label='Best Distance with Traffic')
+plt.plot(range(len(hybrid_avg_history)), hybrid_avg_history, 'b-', alpha=0.5, linewidth=1, label='Avg Distance with Traffic')
 
 # Create a twin y-axis for traffic levels
 ax2 = plt.twinx()
 if gen_points:  # Only if we have traffic data
-    ax2.scatter(gen_points, traffic_levels, c='r', s=30, alpha=0.6, label='Traffic Level')
+    ax2.scatter(gen_points, traffic_levels, c='r', s=30, alpha=0.6, label='Traffic Multiplier')
     ax2.set_ylabel('Traffic Multiplier', color='r')
     ax2.tick_params(axis='y', labelcolor='r')
 
@@ -742,20 +748,67 @@ plt.xlabel('Generations')
 plt.ylabel('Tour Distance (km)')
 plt.legend(loc='upper right')
 plt.grid(True)
+plt.tight_layout()
+plt.savefig(f'{output_dir}ga_convergence_with_traffic.png', dpi=300)
+plt.close()
 
-# Plot 3: Map visualization with route and traffic
-plt.subplot(3, 1, 3)
+# ---- 3. Route Visualization Without Traffic ----
+plt.figure(figsize=(10, 8))
+
+# Calculate base distance path (without traffic considerations)
+# We'll use the same hybrid_route but calculate distances without traffic
+
+# Plot all cities
+plt.scatter(cities['Long'], cities['Lat'], c='blue', s=50, label='Cities')
 
 # Extract coordinates for the best route
 route_lats = [cities.iloc[city_idx]['Lat'] for city_idx in hybrid_route]
 route_longs = [cities.iloc[city_idx]['Long'] for city_idx in hybrid_route]
 
+# Plot the route
+plt.plot(route_longs, route_lats, 'g-', linewidth=2.5, 
+         label=f'Best Route (Base: {hybrid_distance_base:.2f} km)')
+
+# Annotate cities
+for i, city_idx in enumerate(hybrid_route):
+    city_name = cities.iloc[city_idx]['City']
+    plt.annotate(
+        city_name,
+        (cities.iloc[city_idx]['Long'], cities.iloc[city_idx]['Lat']),
+        xytext=(5, 5),
+        textcoords='offset points',
+        fontsize=8
+    )
+
+# Highlight start/end city
+plt.scatter(
+    cities.iloc[START_CITY]['Long'],
+    cities.iloc[START_CITY]['Lat'],
+    c='green',
+    s=100,
+    label='Start/End City'
+)
+
+plt.title(f'Optimized TSP Route Without Traffic Considerations\n'
+          f'Starting from {city_names[START_CITY]}\n'
+          f'Base Distance: {hybrid_distance_base:.2f} km')
+plt.xlabel('Longitude')
+plt.ylabel('Latitude')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.savefig(f'{output_dir}route_without_traffic.png', dpi=300)
+plt.close()
+
+# ---- 4. Route Visualization With Traffic ----
+plt.figure(figsize=(10, 8))
+
 # Plot all cities
 plt.scatter(cities['Long'], cities['Lat'], c='blue', s=50, label='Cities')
 
-# Plot the route
-plt.plot(route_longs, route_lats, 'r-', linewidth=1.5, 
-         label=f'Best Route ({hybrid_distance_with_traffic:.2f} km)')
+# Extract coordinates for the best route
+route_lats = [cities.iloc[city_idx]['Lat'] for city_idx in hybrid_route]
+route_longs = [cities.iloc[city_idx]['Long'] for city_idx in hybrid_route]
 
 # Get final traffic matrix for edge colors
 final_traffic_matrix = traffic_manager.traffic_matrix
@@ -810,38 +863,40 @@ legend_elements = [
     Line2D([0], [0], color='orange', lw=3, label='Medium Traffic (1.2-1.8x)'),
     Line2D([0], [0], color='red', lw=4, label='Heavy Traffic (>1.8x)')
 ]
-plt.legend(handles=legend_elements, loc='lower right')
+plt.legend(handles=legend_elements, loc='best')
 
 plt.title(f'Optimized TSP Route with Traffic Conditions\n'
           f'Starting from {city_names[START_CITY]}\n'
-          f'Travel Time: {hybrid_travel_time:.2f} hours')
+          f'Travel Time: {hybrid_travel_time:.2f} hours\n'
+          f'Distance with Traffic: {hybrid_distance_with_traffic:.2f} km')
 plt.xlabel('Longitude')
 plt.ylabel('Latitude')
 plt.grid(True)
-
 plt.tight_layout()
-plt.savefig('tsp_traffic_hybrid_results.png', dpi=300)
-plt.show()
+plt.savefig(f'{output_dir}route_with_traffic.png', dpi=300)
+plt.close()
 
-# Print the detailed route information
-print("\n====== DETAILED ROUTE INFORMATION ======")
-print(f"Starting city: {city_names[START_CITY]}")
-print("\nRoute order:")
-for i, city_idx in enumerate(hybrid_route):
-    print(f"{i+1}. {city_names[city_idx]}")
-    
-print(f"\nTotal distance without traffic: {hybrid_distance_base:.2f} km")
-print(f"Total distance with traffic: {hybrid_distance_with_traffic:.2f} km")
-print(f"Estimated travel time: {hybrid_travel_time:.2f} hours")
-print(f"Traffic impact: {(hybrid_distance_with_traffic - hybrid_distance_base):.2f} km ({((hybrid_distance_with_traffic/hybrid_distance_base)-1)*100:.2f}% increase)")
+# ---- 5. Create a convergence comparison plot (GA with/without traffic) ----
+# For this plot, we need to run additional code to get GA convergence without traffic
+# This would require running another optimization, so we can add a simulated convergence 
+# based on the base distances
 
-print("\nPerformance metrics:")
-print(f"Q-Learning training time: {ql_training_time:.2f} seconds")
-print(f"Genetic Algorithm training time: {ga_training_time:.2f} seconds")
-print(f"Total execution time: {total_execution_time:.2f} seconds")
-print(f"Improvement over Q-Learning solution: {improvement_over_ql_with_traffic:.2f}% distance, {improvement_over_ql_time:.2f}% time")
+plt.figure(figsize=(10, 6))
+# Plot the hybrid GA convergence (with traffic)
+plt.plot(range(len(hybrid_history)), hybrid_history, 'r-', linewidth=2, label='With Traffic')
 
-print("\nTraffic conditions during final route:")
-print(f"Hour of day: {final_traffic['time_of_day']}:00")
-print(f"Average traffic multiplier: {final_traffic['avg_traffic_multiplier']:.2f}x")
-print(f"Max traffic multiplier: {final_traffic['max_traffic_multiplier']:.2f}x")
+# Simulate data for without traffic (this is just an approximation)
+# In a real implementation, you would run the GA again with base distances
+adjusted_history = [dist / final_traffic['avg_traffic_multiplier'] for dist in hybrid_history]
+plt.plot(range(len(adjusted_history)), adjusted_history, 'g-', linewidth=2, label='Without Traffic (Estimated)')
+
+plt.title('Hybrid GA Convergence Comparison')
+plt.xlabel('Generations')
+plt.ylabel('Best Tour Distance (km)')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.savefig(f'{output_dir}ga_convergence_comparison.png', dpi=300)
+plt.close()
+
+print("All visualizations have been saved successfully!")
