@@ -12,7 +12,7 @@ The city data is read from `Indian Cities Database.csv`, and each script asks yo
 
 ## Algorithms in this Repo
 
-## 1) Q-Learning (`QLRL.py`)
+### 1) Q-Learning (`QLRL.py`)
 
 ### What it does
 - Builds a city-to-city distance matrix using Haversine distance.
@@ -36,7 +36,7 @@ The city data is read from `Indian Cities Database.csv`, and each script asks yo
 
 ---
 
-## 2) Genetic Algorithm (`GA.py`)
+### 2) Genetic Algorithm (`GA.py`)
 
 ### What it does
 - Evolves a population of candidate tours using:
@@ -63,7 +63,7 @@ The city data is read from `Indian Cities Database.csv`, and each script asks yo
 
 ---
 
-## 3) Hybrid Q-Learning + GA (`hybrid.py`)
+### 3) Hybrid Q-Learning + GA (`hybrid.py`)
 
 ### What it does
 - Uses Q-Learning first to learn a high-quality initial policy/route.
