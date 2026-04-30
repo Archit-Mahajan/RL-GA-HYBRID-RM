@@ -48,21 +48,40 @@ export type WaterTrackerState = {
 
 const DEFAULT_GOAL_ML = 2000;
 
-const createIntakeId = () =>
-  `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+const createIntakeId = () => {
+  const randomUUID = globalThis.crypto?.randomUUID?.bind(globalThis.crypto);
+  if (randomUUID) {
+    return randomUUID();
+  }
+  return `${Date.now()}-${Math.floor(Math.random() * 1e9)}-${Math.random()
+    .toString(16)
+    .slice(2, 10)}`;
+};
+
+const pad = (value: number) => value.toString().padStart(2, '0');
 
 const getDateKey = (date: Date = new Date()) =>
-  date.toISOString().split('T')[0];
+  `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 
-const dateKeyToMidnight = (dateKey: string) =>
-  new Date(`${dateKey}T00:00:00.000Z`);
+const parseDateKey = (dateKey: string) => {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Date(year, month - 1, day);
+};
 
-const isNextDay = (previous: string, next: string) =>
-  dateKeyToMidnight(next).getTime() - dateKeyToMidnight(previous).getTime() ===
-  24 * 60 * 60 * 1000;
+const isNextDay = (previous: string, next: string) => {
+  const previousDate = parseDateKey(previous);
+  previousDate.setDate(previousDate.getDate() + 1);
+  return getDateKey(previousDate) === next;
+};
 
 const sumIntakes = (log: DailyLog) =>
-  log.intakes.reduce((total, intake) => total + intake.amount_ml, 0);
+  log.intakes.reduce((total, intake) => {
+    const amount = Number(intake.amount_ml);
+    if (!Number.isFinite(amount) || amount < 0) {
+      return total;
+    }
+    return total + amount;
+  }, 0);
 
 const metGoal = (log: DailyLog) =>
   log.goal_ml > 0 && sumIntakes(log) >= log.goal_ml;
@@ -89,7 +108,11 @@ const computeStreakStats = (logs: DailyLog[]) => {
       continue;
     }
 
-    if (i === 0 || !previousLog || !metGoal(previousLog) || !isNextDay(previousLog.date, log.date)) {
+    const isFirstLog = i === 0;
+    const isConsecutive = !!previousLog && isNextDay(previousLog.date, log.date);
+    const shouldContinue = !!previousLog && metGoal(previousLog) && isConsecutive;
+
+    if (isFirstLog || !shouldContinue) {
       currentRun = 1;
     } else {
       currentRun += 1;
@@ -120,11 +143,15 @@ const computeStreakStats = (logs: DailyLog[]) => {
   return { current, longest };
 };
 
-const createDailyLog = (date: string, goal_ml: number, streak: number): DailyLog => ({
+const createDailyLog = (
+  date: string,
+  goal_ml: number,
+  initialStreak: number,
+): DailyLog => ({
   date,
   intakes: [],
   goal_ml,
-  streak,
+  streak: initialStreak,
 });
 
 const defaultProfile: UserProfile = {
@@ -135,123 +162,133 @@ const defaultProfile: UserProfile = {
   reminder_times: [],
 };
 
+const MAX_WEEKLY_DAYS = 7;
+const MAX_MONTHLY_DAYS = 30;
+
 export const useWaterTrackerStore = create<WaterTrackerState>()(
   persist(
     (set, get) => ({
-      dailyLog: createDailyLog(getDateKey(), DEFAULT_GOAL_ML, 0),
-      userProfile: defaultProfile,
-      appState: {
-        currentStreak: 0,
-        longestStreak: 0,
-        weeklyData: [],
-        monthlyData: [],
-      },
-      addIntake: (amount_ml, cup_size, timestamp = new Date().toISOString()) => {
-        set((state) => ({
-          dailyLog: {
-            ...state.dailyLog,
-            intakes: [
-              ...state.dailyLog.intakes,
-              { id: createIntakeId(), amount_ml, timestamp, cup_size },
-            ],
-          },
-        }));
-        get().updateStreak();
-      },
-      removeIntake: (id) => {
-        set((state) => ({
-          dailyLog: {
-            ...state.dailyLog,
-            intakes: state.dailyLog.intakes.filter((intake) => intake.id !== id),
-          },
-        }));
-        get().updateStreak();
-      },
-      setGoal: (goal_ml) => {
-        set((state) => ({
-          dailyLog: {
-            ...state.dailyLog,
-            goal_ml,
-          },
-        }));
-        get().updateStreak();
-      },
-      resetDay: () => {
-        set((state) => {
-          const today = getDateKey();
-          if (state.dailyLog.date === today) {
-            return state;
-          }
-
-          const previousLog = state.dailyLog;
-          const weeklyData = trimLogs(
-            [...state.appState.weeklyData, previousLog],
-            7,
-          );
-          const monthlyData = trimLogs(
-            [...state.appState.monthlyData, previousLog],
-            30,
-          );
-          const streakStats = computeStreakStats(monthlyData);
-          const longestStreak = Math.max(
-            state.appState.longestStreak,
-            streakStats.longest,
-          );
-
-          return {
-            dailyLog: createDailyLog(
-              today,
-              previousLog.goal_ml,
-              streakStats.current,
-            ),
-            appState: {
-              ...state.appState,
-              currentStreak: streakStats.current,
-              longestStreak,
-              weeklyData,
-              monthlyData,
-            },
-          };
-        });
-      },
-      updateStreak: () => {
-        set((state) => {
-          const logs = trimLogs(
-            [...state.appState.monthlyData, state.dailyLog],
-            30,
-          );
-          const streakStats = computeStreakStats(logs);
-          const longestStreak = Math.max(
-            state.appState.longestStreak,
-            streakStats.longest,
-          );
-
-          return {
+        dailyLog: createDailyLog(getDateKey(), DEFAULT_GOAL_ML, 0),
+        userProfile: defaultProfile,
+        appState: {
+          currentStreak: 0,
+          longestStreak: 0,
+          weeklyData: [],
+          monthlyData: [],
+        },
+        addIntake: (amount_ml, cup_size, timestamp = new Date().toISOString()) => {
+          set((state) => ({
             dailyLog: {
               ...state.dailyLog,
-              streak: streakStats.current,
+              intakes: [
+                ...state.dailyLog.intakes,
+                { id: createIntakeId(), amount_ml, timestamp, cup_size },
+              ],
             },
-            appState: {
-              ...state.appState,
-              currentStreak: streakStats.current,
-              longestStreak,
+          }));
+          get().updateStreak();
+        },
+        removeIntake: (id) => {
+          set((state) => ({
+            dailyLog: {
+              ...state.dailyLog,
+              intakes: state.dailyLog.intakes.filter((intake) => intake.id !== id),
             },
-          };
-        });
-      },
-      ensureTodayLog: () => {
-        const today = getDateKey();
-        const { dailyLog } = get();
-        if (dailyLog.date !== today) {
-          get().resetDay();
-        }
-      },
-    }),
+          }));
+          get().updateStreak();
+        },
+        setGoal: (goal_ml) => {
+          set((state) => ({
+            dailyLog: {
+              ...state.dailyLog,
+              goal_ml,
+            },
+          }));
+          get().updateStreak();
+        },
+        resetDay: () => {
+          set((state) => {
+            const today = getDateKey();
+            if (state.dailyLog.date === today) {
+              return state;
+            }
+
+            const previousLog = state.dailyLog;
+            const weeklyData = trimLogs(
+              [...state.appState.weeklyData, previousLog],
+              MAX_WEEKLY_DAYS,
+            );
+            const monthlyData = trimLogs(
+              [...state.appState.monthlyData, previousLog],
+              MAX_MONTHLY_DAYS,
+            );
+            const streakStats = computeStreakStats(monthlyData);
+            const longestStreak = Math.max(
+              state.appState.longestStreak,
+              streakStats.longest,
+            );
+
+            return {
+              dailyLog: createDailyLog(
+                today,
+                previousLog.goal_ml,
+                streakStats.current,
+              ),
+              appState: {
+                ...state.appState,
+                currentStreak: streakStats.current,
+                longestStreak,
+                weeklyData,
+                monthlyData,
+              },
+            };
+          });
+        },
+        updateStreak: () => {
+          set((state) => {
+            const logs = trimLogs(
+              [...state.appState.monthlyData, state.dailyLog],
+              MAX_MONTHLY_DAYS,
+            );
+            const streakStats = computeStreakStats(logs);
+            const longestStreak = Math.max(
+              state.appState.longestStreak,
+              streakStats.longest,
+            );
+
+            return {
+              dailyLog: {
+                ...state.dailyLog,
+                streak: streakStats.current,
+              },
+              appState: {
+                ...state.appState,
+                currentStreak: streakStats.current,
+                longestStreak,
+              },
+            };
+          });
+        },
+        ensureTodayLog: () => {
+          const today = getDateKey();
+          const { dailyLog } = get();
+          if (dailyLog.date !== today) {
+            get().resetDay();
+          }
+        },
+      }),
     {
       name: 'water-tracker-store',
       storage: createJSONStorage(() => AsyncStorage),
-      onRehydrateStorage: () => (state) => {
-        state?.ensureTodayLog();
+      onRehydrateStorage: () => (state, error) => {
+        if (error) {
+          console.warn('Water tracker state rehydration failed', error);
+          return;
+        }
+        if (!state) {
+          return;
+        }
+        state.ensureTodayLog();
       },
     },
   ),
