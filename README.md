@@ -115,5 +115,3 @@ Each script will prompt for the start city index and then generate plots/results
 - Some paths in scripts are currently hardcoded to local absolute paths (dataset/output directories).  
   Update them to paths valid in your environment before running.
 - Traffic effects are simulated and time-varying to model realistic road conditions.
-README.md
-
